@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     // Initialize ZAI
     let zai;
     try {
-      // Try to initialize with API key from environment variable if available
+      // Get API key from environment
       const apiKey = process.env.ZAI_API_KEY;
       console.log('[Enhance Prompt API] Checking for API key:', { 
         hasApiKey: !!apiKey, 
@@ -62,27 +62,37 @@ export async function POST(request: NextRequest) {
       });
       
       if (apiKey && apiKey.trim()) {
-        // Try different initialization methods
-        try {
-          zai = await ZAI.create({ apiKey: apiKey.trim() });
-          console.log('[Enhance Prompt API] ZAI SDK initialized with API key');
-        } catch (createError1) {
+        // Ensure config file exists - create it if needed
+        const { join } = await import('path');
+        const { writeFileSync, existsSync } = await import('fs');
+        const configPath = join(process.cwd(), '.z-ai-config');
+        const configContent = JSON.stringify({ apiKey: apiKey.trim() }, null, 2);
+        
+        // Create config file if it doesn't exist or if we have API key from env
+        if (!existsSync(configPath) || apiKey) {
           try {
-            zai = await ZAI.create({ api_key: apiKey.trim() });
-            console.log('[Enhance Prompt API] ZAI SDK initialized with API key (alt method)');
-          } catch (createError2) {
-            const { join } = await import('path');
-            const configPath = join(process.cwd(), '.z-ai-config');
-            zai = await ZAI.create({ configPath });
-            console.log('[Enhance Prompt API] ZAI SDK initialized from config file');
+            writeFileSync(configPath, configContent, 'utf8');
+            console.log('[Enhance Prompt API] Created/updated config file at:', configPath);
+          } catch (writeError) {
+            console.warn('[Enhance Prompt API] Could not write config file:', writeError);
           }
         }
+        
+        // Try initialization - SDK should now find the config file
+        try {
+          zai = await ZAI.create();
+          console.log('[Enhance Prompt API] ZAI SDK initialized successfully');
+        } catch (createError) {
+          // If default doesn't work, try with explicit path
+          console.log('[Enhance Prompt API] Trying with explicit config path...');
+          zai = await ZAI.create({ configPath });
+          console.log('[Enhance Prompt API] ZAI SDK initialized with config path');
+        }
       } else {
-        const { join } = await import('path');
-        const configPath = join(process.cwd(), '.z-ai-config');
-        console.log('[Enhance Prompt API] No API key in env, trying config file at:', configPath);
-        zai = await ZAI.create({ configPath });
-        console.log('[Enhance Prompt API] ZAI SDK initialized from config file');
+        // No API key - try default initialization
+        console.log('[Enhance Prompt API] No API key found, trying default initialization');
+        zai = await ZAI.create();
+        console.log('[Enhance Prompt API] ZAI SDK initialized with default method');
       }
     } catch (e) {
       const errorDetails = e instanceof Error ? e.message : String(e);
