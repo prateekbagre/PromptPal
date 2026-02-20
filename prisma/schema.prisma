@@ -9,24 +9,50 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Transcription {
+  id            String            @id @default(cuid())
+  transcription String
+  wordCount     Int
+  fileName      String
+  fileSize      Int
+  type          String            // 'recording' | 'upload'
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  
+  // Relation to enhanced prompts
+  enhancedPrompts EnhancedPrompt[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model EnhancedPrompt {
+  id                String              @id @default(cuid())
+  transcriptionId   String
+  enhancedPrompt    String
+  summary           String
+  originalText      String
+  targetAgent       String
+  promptStyle       String
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  // Relations
+  transcription     Transcription       @relation(fields: [transcriptionId], references: [id], onDelete: Cascade)
+  suggestedFollowUps SuggestedFollowUp[]
+  
+  @@index([transcriptionId])
+}
+
+model SuggestedFollowUp {
+  id              String          @id @default(cuid())
+  enhancedPromptId String
+  followUpText    String
+  createdAt       DateTime        @default(now())
+  
+  // Relation to enhanced prompt
+  enhancedPrompt  EnhancedPrompt  @relation(fields: [enhancedPromptId], references: [id], onDelete: Cascade)
+  
+  @@index([enhancedPromptId])
 }
