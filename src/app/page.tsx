@@ -101,22 +101,28 @@ export default function VoiceTranscriptionApp() {
   
   const { toast } = useToast()
 
-  // Load history from localStorage on mount
+  // Load history from database on mount
   useEffect(() => {
-    const savedHistory = localStorage.getItem('transcriptionHistory')
-    if (savedHistory) {
+    const loadHistory = async () => {
       try {
-        setHistory(JSON.parse(savedHistory))
-      } catch (e) {
-        console.error('Failed to load history:', e)
+        const response = await fetch('/api/transcriptions?limit=20')
+        const data = await response.json()
+        
+        if (data.success && data.transcriptions) {
+          setHistory(data.transcriptions)
+        }
+      } catch (error) {
+        console.error('Failed to load history from database:', error)
+        toast({
+          title: 'Failed to load history',
+          description: 'Could not load transcriptions from database.',
+          variant: 'destructive'
+        })
       }
     }
-  }, [])
-
-  // Save history to localStorage when it changes
-  useEffect(() => {
-    localStorage.setItem('transcriptionHistory', JSON.stringify(history))
-  }, [history])
+    
+    loadHistory()
+  }, [toast])
 
   // Timer for recording duration
   useEffect(() => {
@@ -265,7 +271,7 @@ export default function VoiceTranscriptionApp() {
       
       if (data.success) {
         const result: TranscriptionResult = {
-          id: Date.now().toString(),
+          id: data.id || Date.now().toString(),
           transcription: data.transcription || '',
           wordCount: data.wordCount || 0,
           fileName: data.fileName,
@@ -275,7 +281,20 @@ export default function VoiceTranscriptionApp() {
         }
         
         setCurrentResult(result)
-        setHistory(prev => [result, ...prev].slice(0, 20))
+        
+        // Refresh history from database
+        try {
+          const historyResponse = await fetch('/api/transcriptions?limit=20')
+          const historyData = await historyResponse.json()
+          if (historyData.success && historyData.transcriptions) {
+            setHistory(historyData.transcriptions)
+          }
+        } catch (err) {
+          console.error('Failed to refresh history:', err)
+          // Fallback: add to local state
+          setHistory(prev => [result, ...prev].slice(0, 20))
+        }
+        
         setEnhancedPrompt(null)
         
         toast({
@@ -371,15 +390,34 @@ export default function VoiceTranscriptionApp() {
       }
 
       if (data.success) {
-        setEnhancedPrompt({
+        const enhancedPromptData = {
           enhancedPrompt: data.enhancedPrompt,
           summary: data.summary,
           suggestedFollowUps: data.suggestedFollowUps || [],
           originalText: data.originalText,
           targetAgent: data.targetAgent,
           promptStyle: data.promptStyle
-        })
+        }
+        
+        setEnhancedPrompt(enhancedPromptData)
         setShowPromptDialog(true)
+
+        // Save enhanced prompt to database if we have a current transcription
+        if (currentResult?.id) {
+          try {
+            await fetch('/api/enhanced-prompts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transcriptionId: currentResult.id,
+                ...enhancedPromptData,
+              }),
+            })
+          } catch (err) {
+            console.error('Failed to save enhanced prompt to database:', err)
+            // Don't show error to user - enhancement still worked
+          }
+        }
 
         toast({
           title: 'Prompt enhanced!',
@@ -450,27 +488,60 @@ ${result.transcription}
     })
   }, [toast])
 
-  const deleteFromHistory = useCallback((id: string) => {
-    setHistory(prev => prev.filter(item => item.id !== id))
-    if (currentResult?.id === id) {
-      setCurrentResult(null)
-      setEnhancedPrompt(null)
+  const deleteFromHistory = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/transcriptions/${id}`, {
+        method: 'DELETE',
+      })
+      const data = await response.json()
+      
+      if (data.success) {
+        setHistory(prev => prev.filter(item => item.id !== id))
+        if (currentResult?.id === id) {
+          setCurrentResult(null)
+          setEnhancedPrompt(null)
+        }
+        toast({
+          title: 'Deleted',
+          description: 'Transcription removed from history.',
+        })
+      } else {
+        throw new Error(data.error || 'Failed to delete')
+      }
+    } catch (error) {
+      console.error('Failed to delete transcription:', error)
+      toast({
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'Could not delete transcription.',
+        variant: 'destructive'
+      })
     }
-    toast({
-      title: 'Deleted',
-      description: 'Transcription removed from history.',
-    })
   }, [currentResult, toast])
 
-  const clearHistory = useCallback(() => {
-    setHistory([])
-    setCurrentResult(null)
-    setEnhancedPrompt(null)
-    toast({
-      title: 'History cleared',
-      description: 'All transcriptions have been removed.',
-    })
-  }, [toast])
+  const clearHistory = useCallback(async () => {
+    try {
+      // Delete all transcriptions one by one
+      const deletePromises = history.map(item =>
+        fetch(`/api/transcriptions/${item.id}`, { method: 'DELETE' })
+      )
+      await Promise.all(deletePromises)
+      
+      setHistory([])
+      setCurrentResult(null)
+      setEnhancedPrompt(null)
+      toast({
+        title: 'History cleared',
+        description: 'All transcriptions have been removed.',
+      })
+    } catch (error) {
+      console.error('Failed to clear history:', error)
+      toast({
+        title: 'Clear failed',
+        description: 'Could not clear all transcriptions.',
+        variant: 'destructive'
+      })
+    }
+  }, [history, toast])
 
   return (
     <div className="min-h-screen bg-background">
@@ -710,7 +781,21 @@ ${result.transcription}
                   <div className="p-4 rounded-lg bg-muted border">
                     <Textarea
                       value={currentResult.transcription}
-                      onChange={(e) => setCurrentResult(prev => prev ? { ...prev, transcription: e.target.value } : null)}
+                      onChange={async (e) => {
+                        const newTranscription = e.target.value
+                        setCurrentResult(prev => prev ? { ...prev, transcription: newTranscription } : null)
+                        
+                        // Update in database
+                        try {
+                          await fetch(`/api/transcriptions/${currentResult.id}`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ transcription: newTranscription }),
+                          })
+                        } catch (err) {
+                          console.error('Failed to update transcription:', err)
+                        }
+                      }}
                       className="min-h-[200px] resize-none bg-transparent border-0 p-0 focus-visible:ring-0"
                       placeholder="Transcription will appear here..."
                     />

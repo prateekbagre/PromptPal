@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createTranscription } from '@/lib/db-utils';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -144,13 +145,35 @@ export async function POST(request: NextRequest) {
     console.log(`[Transcribe API] Word count: ${wordCount}`);
     console.log(`[Transcribe API] Preview: ${transcription.substring(0, 100)}...`);
 
+    // Determine type from file name or default to 'upload'
+    const type = audioFile.name.includes('recording') || audioFile.name.includes('webm') 
+      ? 'recording' as const 
+      : 'upload' as const;
+
+    // Save to database
+    let dbTranscription;
+    try {
+      dbTranscription = await createTranscription({
+        transcription,
+        wordCount,
+        fileName: audioFile.name,
+        fileSize: audioFile.size,
+        type,
+      });
+      console.log(`[Transcribe API] Saved to database with ID: ${dbTranscription.id}`);
+    } catch (dbError) {
+      console.error('[Transcribe API] Failed to save to database:', dbError);
+      // Continue even if database save fails - return the transcription anyway
+    }
+
     return NextResponse.json({
       success: true,
       transcription: transcription,
       wordCount: wordCount,
       fileName: audioFile.name,
       fileSize: audioFile.size,
-      timestamp: new Date().toISOString()
+      timestamp: dbTranscription?.createdAt.toISOString() || new Date().toISOString(),
+      id: dbTranscription?.id || Date.now().toString(), // Use DB ID if available, fallback to timestamp
     });
 
   } catch (error: unknown) {
