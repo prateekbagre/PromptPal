@@ -74,12 +74,25 @@ export async function POST(request: NextRequest) {
     
     let ZAI;
     try {
-      ZAI = (await import('z-ai-web-dev-sdk')).default;
-      console.log('[Transcribe API] ZAI SDK module loaded');
+      const zaiModule = await import('z-ai-web-dev-sdk');
+      ZAI = zaiModule.default || zaiModule;
+      console.log('[Transcribe API] ZAI SDK module loaded', { hasDefault: !!zaiModule.default, keys: Object.keys(zaiModule) });
     } catch (e) {
-      console.error('[Transcribe API] Failed to import ZAI SDK:', e);
+      const errorDetails = e instanceof Error ? e.message : String(e);
+      console.error('[Transcribe API] Failed to import ZAI SDK:', errorDetails, e);
       return NextResponse.json(
-        { success: false, error: 'Speech recognition service unavailable. Please try again later.' },
+        { 
+          success: false, 
+          error: `Speech recognition service unavailable: ${errorDetails}. Please check if z-ai-web-dev-sdk is installed.` 
+        },
+        { status: 503 }
+      );
+    }
+
+    if (!ZAI) {
+      console.error('[Transcribe API] ZAI SDK is undefined after import');
+      return NextResponse.json(
+        { success: false, error: 'Failed to load speech recognition SDK. Please check installation.' },
         { status: 503 }
       );
     }
@@ -87,11 +100,15 @@ export async function POST(request: NextRequest) {
     let zai;
     try {
       zai = await ZAI.create();
-      console.log('[Transcribe API] ZAI SDK initialized');
+      console.log('[Transcribe API] ZAI SDK initialized successfully');
     } catch (e) {
-      console.error('[Transcribe API] Failed to initialize ZAI:', e);
+      const errorDetails = e instanceof Error ? e.message : String(e);
+      console.error('[Transcribe API] Failed to initialize ZAI:', errorDetails, e);
       return NextResponse.json(
-        { success: false, error: 'Speech recognition service unavailable. Please try again later.' },
+        { 
+          success: false, 
+          error: `Failed to initialize speech recognition service: ${errorDetails}. Please check your configuration.` 
+        },
         { status: 503 }
       );
     }
@@ -123,17 +140,34 @@ export async function POST(request: NextRequest) {
     if (!asrResponse) {
       console.error('[Transcribe API] All ASR attempts failed');
       const errorMessage = lastError?.message || 'Speech recognition service unavailable';
+      const errorStack = lastError instanceof Error ? lastError.stack : undefined;
+      
+      console.error('[Transcribe API] Error details:', {
+        message: errorMessage,
+        stack: errorStack,
+        error: lastError
+      });
       
       // Provide user-friendly error messages
-      if (errorMessage.includes('fetch failed') || errorMessage.includes('network')) {
+      if (errorMessage.includes('fetch failed') || errorMessage.includes('network') || errorMessage.includes('ECONNREFUSED')) {
         return NextResponse.json(
           { success: false, error: 'Speech recognition service is temporarily unavailable. Please try again in a moment.' },
           { status: 503 }
         );
       }
       
+      if (errorMessage.includes('API key') || errorMessage.includes('authentication') || errorMessage.includes('401') || errorMessage.includes('403')) {
+        return NextResponse.json(
+          { success: false, error: 'Authentication failed. Please check your API configuration.' },
+          { status: 401 }
+        );
+      }
+      
       return NextResponse.json(
-        { success: false, error: `Transcription failed: ${errorMessage}` },
+        { 
+          success: false, 
+          error: `Transcription failed: ${errorMessage}. Please check the server logs for more details.` 
+        },
         { status: 500 }
       );
     }
