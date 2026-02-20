@@ -99,11 +99,30 @@ export async function POST(request: NextRequest) {
 
     let zai;
     try {
-      zai = await ZAI.create();
-      console.log('[Transcribe API] ZAI SDK initialized successfully');
+      // Try to initialize with API key from environment variable if available
+      const apiKey = process.env.ZAI_API_KEY;
+      if (apiKey) {
+        zai = await ZAI.create({ apiKey });
+        console.log('[Transcribe API] ZAI SDK initialized with API key from environment');
+      } else {
+        zai = await ZAI.create();
+        console.log('[Transcribe API] ZAI SDK initialized successfully');
+      }
     } catch (e) {
       const errorDetails = e instanceof Error ? e.message : String(e);
       console.error('[Transcribe API] Failed to initialize ZAI:', errorDetails, e);
+      
+      // Provide helpful error message
+      if (errorDetails.includes('Configuration file not found') || errorDetails.includes('.z-ai-config')) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'Z.AI configuration file (.z-ai-config) not found. Please create it in your project root with your API key, or set ZAI_API_KEY environment variable.' 
+          },
+          { status: 503 }
+        );
+      }
+      
       return NextResponse.json(
         { 
           success: false, 

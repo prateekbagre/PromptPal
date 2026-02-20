@@ -54,12 +54,31 @@ export async function POST(request: NextRequest) {
     // Initialize ZAI
     let zai;
     try {
-      zai = await ZAI.create();
-      console.log('[Enhance Prompt API] ZAI SDK initialized');
+      // Try to initialize with API key from environment variable if available
+      const apiKey = process.env.ZAI_API_KEY;
+      if (apiKey) {
+        zai = await ZAI.create({ apiKey });
+        console.log('[Enhance Prompt API] ZAI SDK initialized with API key from environment');
+      } else {
+        zai = await ZAI.create();
+        console.log('[Enhance Prompt API] ZAI SDK initialized');
+      }
     } catch (e) {
-      console.error('[Enhance Prompt API] Failed to initialize ZAI:', e);
+      const errorDetails = e instanceof Error ? e.message : String(e);
+      console.error('[Enhance Prompt API] Failed to initialize ZAI:', errorDetails, e);
+      
+      if (errorDetails.includes('Configuration file not found') || errorDetails.includes('.z-ai-config')) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: 'Z.AI configuration file (.z-ai-config) not found. Please create it in your project root with your API key, or set ZAI_API_KEY environment variable.' 
+          },
+          { status: 500 }
+        );
+      }
+      
       return NextResponse.json(
-        { success: false, error: 'Failed to initialize AI service' },
+        { success: false, error: `Failed to initialize AI service: ${errorDetails}` },
         { status: 500 }
       );
     }
