@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createTranscription } from '@/lib/db-utils';
-import { join } from 'path';
-import { writeFileSync, existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -71,112 +69,52 @@ export async function POST(request: NextRequest) {
     const base64Audio = Buffer.from(uint8Array).toString('base64');
     console.log(`[Transcribe API] Base64 length: ${base64Audio.length} characters`);
 
-    // Initialize ZAI SDK
-    console.log('[Transcribe API] Initializing ZAI SDK...');
+    // Get API key from environment
+    const apiKey = process.env.ZAI_API_KEY;
+    console.log('[Transcribe API] Checking for API key:', { 
+      hasApiKey: !!apiKey, 
+      apiKeyLength: apiKey?.length || 0,
+      apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'none'
+    });
     
-    let ZAI;
-    try {
-      const zaiModule = await import('z-ai-web-dev-sdk');
-      ZAI = zaiModule.default || zaiModule;
-      console.log('[Transcribe API] ZAI SDK module loaded', { hasDefault: !!zaiModule.default, keys: Object.keys(zaiModule) });
-    } catch (e) {
-      const errorDetails = e instanceof Error ? e.message : String(e);
-      console.error('[Transcribe API] Failed to import ZAI SDK:', errorDetails, e);
+    if (!apiKey || !apiKey.trim()) {
       return NextResponse.json(
         { 
           success: false, 
-          error: `Speech recognition service unavailable: ${errorDetails}. Please check if z-ai-web-dev-sdk is installed.` 
+          error: 'ZAI_API_KEY not found in environment variables. Please set it in your .env file.' 
         },
         { status: 503 }
       );
     }
 
-    if (!ZAI) {
-      console.error('[Transcribe API] ZAI SDK is undefined after import');
-      return NextResponse.json(
-        { success: false, error: 'Failed to load speech recognition SDK. Please check installation.' },
-        { status: 503 }
-      );
-    }
-
-    let zai;
-    try {
-      // Get API key from environment
-      const apiKey = process.env.ZAI_API_KEY;
-      console.log('[Transcribe API] Checking for API key:', { 
-        hasApiKey: !!apiKey, 
-        apiKeyLength: apiKey?.length || 0,
-        apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'none',
-        cwd: process.cwd()
-      });
-      
-      if (apiKey && apiKey.trim()) {
-        // Ensure config file exists - create it if needed
-        const configPath = join(process.cwd(), '.z-ai-config');
-        const configContent = JSON.stringify({ apiKey: apiKey.trim() }, null, 2);
-        
-        // Create config file if it doesn't exist or if we have API key from env
-        if (!existsSync(configPath) || apiKey) {
-          try {
-            writeFileSync(configPath, configContent, 'utf8');
-            console.log('[Transcribe API] Created/updated config file at:', configPath);
-          } catch (writeError) {
-            console.warn('[Transcribe API] Could not write config file:', writeError);
-          }
-        }
-        
-        // Try initialization - SDK should now find the config file
-        try {
-          zai = await ZAI.create();
-          console.log('[Transcribe API] ZAI SDK initialized successfully');
-        } catch (createError) {
-          // If default doesn't work, try with explicit path
-          console.log('[Transcribe API] Trying with explicit config path...');
-          zai = await ZAI.create({ configPath });
-          console.log('[Transcribe API] ZAI SDK initialized with config path');
-        }
-      } else {
-        // No API key - try default initialization
-        console.log('[Transcribe API] No API key found, trying default initialization');
-        zai = await ZAI.create();
-        console.log('[Transcribe API] ZAI SDK initialized with default method');
-      }
-    } catch (e) {
-      const errorDetails = e instanceof Error ? e.message : String(e);
-      console.error('[Transcribe API] Failed to initialize ZAI:', errorDetails, e);
-      console.error('[Transcribe API] Error stack:', e instanceof Error ? e.stack : 'No stack');
-      
-      // Provide helpful error message
-      if (errorDetails.includes('Configuration file not found') || errorDetails.includes('.z-ai-config')) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: `Z.AI configuration not found. API key from env: ${process.env.ZAI_API_KEY ? 'found' : 'not found'}. Please ensure ZAI_API_KEY is set in .env file or .z-ai-config exists in project root (${process.cwd()}).` 
-          },
-          { status: 503 }
-        );
-      }
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: `Failed to initialize speech recognition service: ${errorDetails}. Please check your configuration.` 
-        },
-        { status: 503 }
-      );
-    }
-    
-    // Perform transcription with retry logic
-    console.log('[Transcribe API] Calling ASR service...');
+    // Use HTTP API directly instead of SDK to avoid config file issues
+    console.log('[Transcribe API] Using Z.AI HTTP API directly...');
     let asrResponse;
     let lastError: Error | null = null;
     
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         console.log(`[Transcribe API] ASR attempt ${attempt}/2`);
-        asrResponse = await zai.audio.asr.create({
-          file_base64: base64Audio
+        
+        // Call Z.AI HTTP API directly
+        const response = await fetch('https://api.z.ai/api/paas/v4/audio/asr', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey.trim()}`,
+            'Accept-Language': 'en-US,en'
+          },
+          body: JSON.stringify({
+            file_base64: base64Audio
+          })
         });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
+        asrResponse = await response.json();
         console.log('[Transcribe API] ASR call successful');
         break; // Success, exit retry loop
       } catch (e) {
@@ -211,7 +149,7 @@ export async function POST(request: NextRequest) {
       
       if (errorMessage.includes('API key') || errorMessage.includes('authentication') || errorMessage.includes('401') || errorMessage.includes('403')) {
         return NextResponse.json(
-          { success: false, error: 'Authentication failed. Please check your API configuration.' },
+          { success: false, error: 'Authentication failed. Please check your API key in .env file.' },
           { status: 401 }
         );
       }
@@ -225,7 +163,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const transcription = asrResponse.text || '';
+    // Extract transcription from response (adjust based on actual API response format)
+    const transcription = asrResponse.text || asrResponse.data?.text || asrResponse.result?.text || '';
     const wordCount = transcription.trim() ? transcription.trim().split(/\s+/).length : 0;
 
     console.log(`[Transcribe API] ========== Success ==========`);

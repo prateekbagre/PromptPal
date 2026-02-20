@@ -38,78 +38,19 @@ export async function POST(request: NextRequest) {
     console.log(`[Enhance Prompt API] Text length: ${text.length}`);
     console.log(`[Enhance Prompt API] Target: ${targetAgent}, Style: ${promptStyle}`);
 
-    // Import ZAI SDK
-    let ZAI;
-    try {
-      ZAI = (await import('z-ai-web-dev-sdk')).default;
-      console.log('[Enhance Prompt API] ZAI SDK imported');
-    } catch (e) {
-      console.error('[Enhance Prompt API] Failed to import ZAI SDK:', e);
+    // Get API key from environment
+    const apiKey = process.env.ZAI_API_KEY;
+    console.log('[Enhance Prompt API] Checking for API key:', { 
+      hasApiKey: !!apiKey, 
+      apiKeyLength: apiKey?.length || 0 
+    });
+    
+    if (!apiKey || !apiKey.trim()) {
       return NextResponse.json(
-        { success: false, error: 'Failed to load AI SDK' },
-        { status: 500 }
-      );
-    }
-
-    // Initialize ZAI
-    let zai;
-    try {
-      // Get API key from environment
-      const apiKey = process.env.ZAI_API_KEY;
-      console.log('[Enhance Prompt API] Checking for API key:', { 
-        hasApiKey: !!apiKey, 
-        apiKeyLength: apiKey?.length || 0 
-      });
-      
-      if (apiKey && apiKey.trim()) {
-        // Ensure config file exists - create it if needed
-        const { join } = await import('path');
-        const { writeFileSync, existsSync } = await import('fs');
-        const configPath = join(process.cwd(), '.z-ai-config');
-        const configContent = JSON.stringify({ apiKey: apiKey.trim() }, null, 2);
-        
-        // Create config file if it doesn't exist or if we have API key from env
-        if (!existsSync(configPath) || apiKey) {
-          try {
-            writeFileSync(configPath, configContent, 'utf8');
-            console.log('[Enhance Prompt API] Created/updated config file at:', configPath);
-          } catch (writeError) {
-            console.warn('[Enhance Prompt API] Could not write config file:', writeError);
-          }
-        }
-        
-        // Try initialization - SDK should now find the config file
-        try {
-          zai = await ZAI.create();
-          console.log('[Enhance Prompt API] ZAI SDK initialized successfully');
-        } catch (createError) {
-          // If default doesn't work, try with explicit path
-          console.log('[Enhance Prompt API] Trying with explicit config path...');
-          zai = await ZAI.create({ configPath });
-          console.log('[Enhance Prompt API] ZAI SDK initialized with config path');
-        }
-      } else {
-        // No API key - try default initialization
-        console.log('[Enhance Prompt API] No API key found, trying default initialization');
-        zai = await ZAI.create();
-        console.log('[Enhance Prompt API] ZAI SDK initialized with default method');
-      }
-    } catch (e) {
-      const errorDetails = e instanceof Error ? e.message : String(e);
-      console.error('[Enhance Prompt API] Failed to initialize ZAI:', errorDetails, e);
-      
-      if (errorDetails.includes('Configuration file not found') || errorDetails.includes('.z-ai-config')) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: `Z.AI configuration not found. API key from env: ${process.env.ZAI_API_KEY ? 'found' : 'not found'}. Please ensure ZAI_API_KEY is set in .env file or .z-ai-config exists in project root.` 
-          },
-          { status: 500 }
-        );
-      }
-      
-      return NextResponse.json(
-        { success: false, error: `Failed to initialize AI service: ${errorDetails}` },
+        { 
+          success: false, 
+          error: 'ZAI_API_KEY not found in environment variables. Please set it in your .env file.' 
+        },
         { status: 500 }
       );
     }
@@ -161,16 +102,33 @@ ${text}
 Target AI Agent: ${targetAgent}
 Preferred Style: ${promptStyle}`;
 
-    // Call LLM
+    // Call LLM using HTTP API directly
     let completion;
     try {
-      completion = await zai.chat.completions.create({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.7
+      console.log('[Enhance Prompt API] Calling Z.AI HTTP API...');
+      const httpResponse = await fetch('https://api.z.ai/api/paas/v4/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey.trim()}`,
+          'Accept-Language': 'en-US,en'
+        },
+        body: JSON.stringify({
+          model: 'glm-5',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7
+        })
       });
+      
+      if (!httpResponse.ok) {
+        const errorText = await httpResponse.text();
+        throw new Error(`HTTP ${httpResponse.status}: ${errorText}`);
+      }
+      
+      completion = await httpResponse.json();
       console.log('[Enhance Prompt API] LLM response received');
     } catch (e) {
       console.error('[Enhance Prompt API] LLM call error:', e);
@@ -181,7 +139,7 @@ Preferred Style: ${promptStyle}`;
       );
     }
 
-    const response = completion.choices[0]?.message?.content || '';
+    const response = completion.choices?.[0]?.message?.content || completion.data?.choices?.[0]?.message?.content || '';
     
     if (!response) {
       return NextResponse.json(
