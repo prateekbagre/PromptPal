@@ -648,9 +648,9 @@ ${result.transcription}
                     disabled={isProcessing}
                   >
                     {isRecording ? (
-                      <Square className="w-8 h-8 text-white" />
+                      <Square className="w-8 h-8" />
                     ) : (
-                      <Mic className="w-8 h-8 text-white" />
+                      <Mic className="w-8 h-8" />
                     )}
                   </Button>
                   {isRecording && (
