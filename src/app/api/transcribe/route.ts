@@ -96,8 +96,8 @@ export async function POST(request: NextRequest) {
       try {
         console.log(`[Transcribe API] ASR attempt ${attempt}/2`);
         
-        // Call Z.AI HTTP API directly
-        const response = await fetch('https://api.z.ai/api/paas/v4/audio/asr', {
+        // Call Z.AI HTTP API directly - correct endpoint for audio transcriptions
+        const response = await fetch('https://api.z.ai/api/paas/v4/audio/transcriptions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -105,6 +105,7 @@ export async function POST(request: NextRequest) {
             'Accept-Language': 'en-US,en'
           },
           body: JSON.stringify({
+            model: 'glm-asr-2512',
             file_base64: base64Audio
           })
         });
@@ -163,9 +164,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Extract transcription from response (adjust based on actual API response format)
-    const transcription = asrResponse.text || asrResponse.data?.text || asrResponse.result?.text || '';
+    // Extract transcription from response (Z.AI API format)
+    const transcription = asrResponse.text || asrResponse.data?.text || asrResponse.result?.text || asrResponse.transcription || '';
     const wordCount = transcription.trim() ? transcription.trim().split(/\s+/).length : 0;
+    
+    console.log('[Transcribe API] Response structure:', {
+      hasText: !!asrResponse.text,
+      hasData: !!asrResponse.data,
+      hasResult: !!asrResponse.result,
+      keys: Object.keys(asrResponse || {})
+    });
 
     console.log(`[Transcribe API] ========== Success ==========`);
     console.log(`[Transcribe API] Word count: ${wordCount}`);
