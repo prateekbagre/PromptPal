@@ -56,12 +56,33 @@ export async function POST(request: NextRequest) {
     try {
       // Try to initialize with API key from environment variable if available
       const apiKey = process.env.ZAI_API_KEY;
-      if (apiKey) {
-        zai = await ZAI.create({ apiKey });
-        console.log('[Enhance Prompt API] ZAI SDK initialized with API key from environment');
+      console.log('[Enhance Prompt API] Checking for API key:', { 
+        hasApiKey: !!apiKey, 
+        apiKeyLength: apiKey?.length || 0 
+      });
+      
+      if (apiKey && apiKey.trim()) {
+        // Try different initialization methods
+        try {
+          zai = await ZAI.create({ apiKey: apiKey.trim() });
+          console.log('[Enhance Prompt API] ZAI SDK initialized with API key');
+        } catch (createError1) {
+          try {
+            zai = await ZAI.create({ api_key: apiKey.trim() });
+            console.log('[Enhance Prompt API] ZAI SDK initialized with API key (alt method)');
+          } catch (createError2) {
+            const { join } = await import('path');
+            const configPath = join(process.cwd(), '.z-ai-config');
+            zai = await ZAI.create({ configPath });
+            console.log('[Enhance Prompt API] ZAI SDK initialized from config file');
+          }
+        }
       } else {
-        zai = await ZAI.create();
-        console.log('[Enhance Prompt API] ZAI SDK initialized');
+        const { join } = await import('path');
+        const configPath = join(process.cwd(), '.z-ai-config');
+        console.log('[Enhance Prompt API] No API key in env, trying config file at:', configPath);
+        zai = await ZAI.create({ configPath });
+        console.log('[Enhance Prompt API] ZAI SDK initialized from config file');
       }
     } catch (e) {
       const errorDetails = e instanceof Error ? e.message : String(e);
@@ -71,7 +92,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { 
             success: false, 
-            error: 'Z.AI configuration file (.z-ai-config) not found. Please create it in your project root with your API key, or set ZAI_API_KEY environment variable.' 
+            error: `Z.AI configuration not found. API key from env: ${process.env.ZAI_API_KEY ? 'found' : 'not found'}. Please ensure ZAI_API_KEY is set in .env file or .z-ai-config exists in project root.` 
           },
           { status: 500 }
         );

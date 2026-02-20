@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createTranscription } from '@/lib/db-utils';
+import { join } from 'path';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -101,23 +102,62 @@ export async function POST(request: NextRequest) {
     try {
       // Try to initialize with API key from environment variable if available
       const apiKey = process.env.ZAI_API_KEY;
-      if (apiKey) {
-        zai = await ZAI.create({ apiKey });
-        console.log('[Transcribe API] ZAI SDK initialized with API key from environment');
+      console.log('[Transcribe API] Checking for API key:', { 
+        hasApiKey: !!apiKey, 
+        apiKeyLength: apiKey?.length || 0,
+        apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'none',
+        cwd: process.cwd()
+      });
+      
+      if (apiKey && apiKey.trim()) {
+        // Try different initialization methods that the SDK might support
+        try {
+          // Method 1: Direct API key
+          zai = await ZAI.create({ apiKey: apiKey.trim() });
+          console.log('[Transcribe API] ZAI SDK initialized with API key (method 1)');
+        } catch (createError1) {
+          try {
+            // Method 2: Alternative key name
+            zai = await ZAI.create({ api_key: apiKey.trim() });
+            console.log('[Transcribe API] ZAI SDK initialized with API key (method 2)');
+          } catch (createError2) {
+            try {
+              // Method 3: Config object format
+              zai = await ZAI.create({ config: { apiKey: apiKey.trim() } });
+              console.log('[Transcribe API] ZAI SDK initialized with API key (method 3)');
+            } catch (createError3) {
+              // If all methods fail, try with config file path
+              const configPath = join(process.cwd(), '.z-ai-config');
+              console.log('[Transcribe API] Trying config file at:', configPath);
+              zai = await ZAI.create({ configPath });
+              console.log('[Transcribe API] ZAI SDK initialized from config file');
+            }
+          }
+        }
       } else {
-        zai = await ZAI.create();
-        console.log('[Transcribe API] ZAI SDK initialized successfully');
+        // Fallback to config file
+        const configPath = join(process.cwd(), '.z-ai-config');
+        console.log('[Transcribe API] No API key in env, trying config file at:', configPath);
+        try {
+          zai = await ZAI.create({ configPath });
+          console.log('[Transcribe API] ZAI SDK initialized from config file');
+        } catch (configError) {
+          // Last resort: try default initialization
+          zai = await ZAI.create();
+          console.log('[Transcribe API] ZAI SDK initialized with default method');
+        }
       }
     } catch (e) {
       const errorDetails = e instanceof Error ? e.message : String(e);
       console.error('[Transcribe API] Failed to initialize ZAI:', errorDetails, e);
+      console.error('[Transcribe API] Error stack:', e instanceof Error ? e.stack : 'No stack');
       
       // Provide helpful error message
       if (errorDetails.includes('Configuration file not found') || errorDetails.includes('.z-ai-config')) {
         return NextResponse.json(
           { 
             success: false, 
-            error: 'Z.AI configuration file (.z-ai-config) not found. Please create it in your project root with your API key, or set ZAI_API_KEY environment variable.' 
+            error: `Z.AI configuration not found. API key from env: ${process.env.ZAI_API_KEY ? 'found' : 'not found'}. Please ensure ZAI_API_KEY is set in .env file or .z-ai-config exists in project root (${process.cwd()}).` 
           },
           { status: 503 }
         );
